@@ -1,6 +1,13 @@
-#include <template/template.hpp>
+#include <camera/camera.hpp>
+#include <debug/debug.hpp>
 
 int main() {
-    if (add(2, 3) != 5) return -1;
+    auto cam = camera::open(1280, 720);
+    if (!cam.is_open) {
+        debug::log::error("unable to open camera");
+        return -1;
+    }
+    camera::read(cam);
+
     return 0;
 }

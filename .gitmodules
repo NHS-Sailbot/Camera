@@ -1,0 +1,3 @@
+[submodule "dep/debug"]
+	path = dep/debug
+	url = https://github.com/GabeRundlett/debug
