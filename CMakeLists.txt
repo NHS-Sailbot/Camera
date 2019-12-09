@@ -9,4 +9,4 @@ add_subdirectory(dep/debug)
 
 add_subdirectory(src)
 add_subdirectory(tests)
-else()
+endif()
