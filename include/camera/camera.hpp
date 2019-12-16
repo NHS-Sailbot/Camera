@@ -7,7 +7,7 @@ namespace camera {
 
     struct Device {
         Pixel *pixels;
-        unsigned int width, height;
+        unsigned int width, height, id;
         unsigned char *data, is_open;
     };
 
@@ -17,5 +17,6 @@ namespace camera {
         open(device, width, height);
         return device;
     }
-    void read(Device &device);
+    void update(Device &device);
+    void close(Device &device);
 } // namespace camera
