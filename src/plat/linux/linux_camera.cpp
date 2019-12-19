@@ -1,4 +1,7 @@
 #include <camera/camera.hpp>
+
+#define DEBUG_ENABLE_TIMING
+#define DEBUG_ENABLE_LOGGING
 #include <debug/debug.hpp>
 
 #include <asm/types.h>
