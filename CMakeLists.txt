@@ -1,12 +1,11 @@
-cmake_minimum_required(VERSION 3.0.0)
-project(camera VERSION 0.1.0)
+cmake_minimum_required(VERSION 3.5)
+project(camera VERSION 1.0.0)
 
-if (NOT TARGET ${PROJECT_NAME})
-	set(camera_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/include")
-	set(debug_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/dep/debug/include")
+set(lib_name ${PROJECT_NAME}${PROJECT_VERSION})
+set(lib_include_dir ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-	add_subdirectory(dep/debug)
+add_subdirectory(src)
 
-	add_subdirectory(src)
-	add_subdirectory(tests)
-endif()
+include(CTest)
+enable_testing()
+add_subdirectory(test)

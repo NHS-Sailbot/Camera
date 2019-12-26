@@ -1,4 +1,4 @@
-#include <camera/camera.hpp>
+#include <HENRY/camera.hpp>
 
 #define DEBUG_ENABLE_TIMING
 #define DEBUG_ENABLE_LOGGING
@@ -15,7 +15,7 @@
 #include <errno.h>
 #include <string.h>
 
-namespace camera {
+namespace HENRY {
     static constexpr unsigned int buffer_count = 4;
     struct LinuxCameraDevice {
         v4l2_buffer bufferinfo[buffer_count];
@@ -25,10 +25,13 @@ namespace camera {
     };
     static LinuxCameraDevice linux_devices[32];
 
-    void open(Device &device, const unsigned int width, const unsigned int height) {
+    Camera::Camera(const unsigned int width, const unsigned int height) { open(width, height); }
+    Camera::~Camera() { close(); }
+
+    void Camera::open(const unsigned int width, const unsigned int height) {
         DEBUG_BEGIN_FUNC_PROFILE;
 
-        device.width = width, device.height = height;
+        this->width = width, this->height = height;
 
         DEBUG_BEGIN_PROFILE(select_index);
         unsigned int index = 0;
@@ -36,7 +39,7 @@ namespace camera {
             if (linux_devices[index].device_file_id < 0) break;
         if (index > 31) {
             debug::log::error("Too many devices requested!");
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(select_index);
@@ -49,7 +52,7 @@ namespace camera {
         linux_device.device_file_id = ::open(filepath, O_RDWR);
         if (!linux_device.device_file_id) {
             debug::log::error("unable to open video source");
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(open_file);
@@ -59,13 +62,13 @@ namespace camera {
         if (ioctl(linux_device.device_file_id, VIDIOC_QUERYCAP, &capability)) {
             debug::log::error("unable to query video capability");
             ::close(linux_device.device_file_id);
-            device.is_open = false;
+            is_open = false;
             return;
         }
         if (!(capability.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
             debug::log::error("device does not handle single-planar video capture");
             ::close(linux_device.device_file_id);
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(get_capabilities);
@@ -79,7 +82,7 @@ namespace camera {
         if (ioctl(linux_device.device_file_id, VIDIOC_S_FMT, &format) < 0) {
             debug::log::error("unable to set video capture format");
             ::close(linux_device.device_file_id);
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(set_format);
@@ -92,7 +95,7 @@ namespace camera {
         if (ioctl(linux_device.device_file_id, VIDIOC_S_PARM, &streamparam) == -1 ||
             ioctl(linux_device.device_file_id, VIDIOC_G_PARM, &streamparam) == -1) {
             debug::log::error("unable to set framerate");
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(set_framerate);
@@ -105,7 +108,7 @@ namespace camera {
         if (ioctl(linux_device.device_file_id, VIDIOC_REQBUFS, &bufrequest) < 0) {
             debug::log::error("unable to request video buffers");
             ::close(linux_device.device_file_id);
-            device.is_open = false;
+            is_open = false;
             return;
         }
         for (unsigned char i = 0; i < buffer_count; ++i) {
@@ -115,7 +118,7 @@ namespace camera {
             if (ioctl(linux_device.device_file_id, VIDIOC_QUERYBUF, &linux_device.bufferinfo[i]) < 0) {
                 debug::log::error("unable to query video buffers");
                 ::close(linux_device.device_file_id);
-                device.is_open = false;
+                is_open = false;
                 return;
             }
             // MAP MEMORY
@@ -123,7 +126,7 @@ namespace camera {
                                                 linux_device.device_file_id, linux_device.bufferinfo[i].m.offset);
             if (linux_device.buffer_start[i] == MAP_FAILED) {
                 debug::log::error("mmap: %s", strerror(errno));
-                device.is_open = false;
+                is_open = false;
                 return;
             }
             memset(linux_device.buffer_start[i], 0, linux_device.bufferinfo[i].length);
@@ -134,7 +137,7 @@ namespace camera {
         int type = linux_device.bufferinfo[0].type;
         if (ioctl(linux_device.device_file_id, VIDIOC_STREAMON, &type) < 0) {
             debug::log::error("VIDIOC_STREAMON: %s", strerror(errno));
-            device.is_open = false;
+            is_open = false;
             return;
         }
         DEBUG_END_PROFILE(activate_streaming);
@@ -144,29 +147,28 @@ namespace camera {
         for (unsigned char i = 1; i < buffer_count; ++i) {
             if (ioctl(linux_device.device_file_id, VIDIOC_QBUF, &linux_device.bufferinfo[i]) < 0) {
                 debug::log::error("VIDIOC_QBUF: %s", strerror(errno));
-                device.is_open = false;
+                is_open = false;
                 return;
             }
         }
         DEBUG_END_PROFILE(put_buffers_in_queue);
 
-        device.is_open = true;
-        device.id = index;
+        is_open = true;
+        id = index;
         linux_device.current_time = debug::timer::micros::now(), linux_device.last_tick_time = linux_device.current_time;
         debug::log::success("Opened camera '%s' at %dx%d", filepath, width, height);
     }
 
-    void update(Device &device) {
-        auto &linux_device = linux_devices[device.id];
+    void Camera::update() {
+        auto &linux_device = linux_devices[id];
         linux_device.current_time = debug::timer::micros::now();
         const auto elapsed = linux_device.current_time - linux_device.last_tick_time;
 
         if (elapsed > 33333) {
             DEBUG_BEGIN_FUNC_PROFILE;
 
-            auto &linux_device = linux_devices[device.id];
-            if (ioctl(linux_device.device_file_id, VIDIOC_QBUF,
-                      &linux_devices[device.id].bufferinfo[linux_device.buffer_index]) < 0) {
+            auto &linux_device = linux_devices[id];
+            if (ioctl(linux_device.device_file_id, VIDIOC_QBUF, &linux_devices[id].bufferinfo[linux_device.buffer_index]) < 0) {
                 debug::log::error("VIDIOC_QBUF2: %s", strerror(errno));
                 return;
             }
@@ -180,7 +182,7 @@ namespace camera {
                 return;
             }
 
-            device.data = reinterpret_cast<unsigned char *>(linux_device.buffer_start[linux_device.buffer_index]);
+            data = reinterpret_cast<unsigned char *>(linux_device.buffer_start[linux_device.buffer_index]);
 
             if (elapsed > 34000)
                 linux_device.last_tick_time = debug::timer::micros::now();
@@ -189,10 +191,10 @@ namespace camera {
         }
     }
 
-    void close(Device &device) {
+    void Camera::close() {
         DEBUG_BEGIN_FUNC_PROFILE;
 
-        auto &linux_device = linux_devices[device.id];
+        auto &linux_device = linux_devices[id];
         // Deactivate streaming
         int type = linux_device.bufferinfo[0].type;
         if (ioctl(linux_device.device_file_id, VIDIOC_STREAMOFF, &type) < 0) {
@@ -202,4 +204,4 @@ namespace camera {
         ::close(linux_device.device_file_id);
         linux_device.device_file_id = -1;
     }
-} // namespace camera
+} // namespace HENRY
