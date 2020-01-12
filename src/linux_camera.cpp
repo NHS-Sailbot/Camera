@@ -7,6 +7,9 @@
 #include <asm/types.h>
 #include <linux/videodev2.h>
 
+#include <jpeglib.h>
+#include <stdio.h>
+
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -16,22 +19,35 @@
 #include <string.h>
 
 namespace HENRY {
-    static constexpr unsigned int buffer_count = 4;
+    static constexpr unsigned int BUFFER_COUNT = 4;
     struct LinuxCameraDevice {
-        v4l2_buffer bufferinfo[buffer_count];
-        void *buffer_start[buffer_count];
+        v4l2_buffer bufferinfo[BUFFER_COUNT];
+        void *buffer_start[BUFFER_COUNT];
         int buffer_index = 0, device_file_id = -1;
         unsigned long long current_time, last_tick_time;
     };
     static LinuxCameraDevice linux_devices[32];
 
-    Camera::Camera(const unsigned int width, const unsigned int height) { open(width, height); }
-    Camera::~Camera() { close(); }
+    struct jpeg_decompress_struct cinfo;
+    struct jpeg_error_mgr jerr;
 
-    void Camera::open(const unsigned int width, const unsigned int height) {
+    void default_camera_on_update(const Camera &c) {
+        //
+    }
+
+    Camera::Camera(const unsigned int width, const unsigned int height)
+        : width(width), height(height), id(0), data_size(0), on_update(default_camera_on_update), data(nullptr),
+          pixels(new unsigned char[width * height * sizeof(Pixel)]), is_open(false) {
+        open();
+    }
+
+    Camera::~Camera() {
+        close();
+        delete[] pixels;
+    }
+
+    void Camera::open() {
         DEBUG_BEGIN_FUNC_PROFILE;
-
-        this->width = width, this->height = height;
 
         DEBUG_BEGIN_PROFILE(select_index);
         unsigned int index = 0;
@@ -111,7 +127,7 @@ namespace HENRY {
             is_open = false;
             return;
         }
-        for (unsigned char i = 0; i < buffer_count; ++i) {
+        for (unsigned char i = 0; i < BUFFER_COUNT; ++i) {
             linux_device.bufferinfo[i].type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
             linux_device.bufferinfo[i].memory = V4L2_MEMORY_MMAP;
             linux_device.bufferinfo[i].index = i;
@@ -144,7 +160,7 @@ namespace HENRY {
 
         // Put each buffer into the queue
         DEBUG_BEGIN_PROFILE(put_buffers_in_queue);
-        for (unsigned char i = 1; i < buffer_count; ++i) {
+        for (unsigned char i = 1; i < BUFFER_COUNT; ++i) {
             if (ioctl(linux_device.device_file_id, VIDIOC_QBUF, &linux_device.bufferinfo[i]) < 0) {
                 debug::log::error("VIDIOC_QBUF: %s", strerror(errno));
                 is_open = false;
@@ -153,10 +169,15 @@ namespace HENRY {
         }
         DEBUG_END_PROFILE(put_buffers_in_queue);
 
-        is_open = true;
+        DEBUG_BEGIN_PROFILE(libjpeg_init);
+        cinfo.err = jpeg_std_error(&jerr);
+        jpeg_create_decompress(&cinfo);
+        DEBUG_END_PROFILE(libjpeg_init);
+
         id = index;
-        linux_device.current_time = debug::timer::micros::now(), linux_device.last_tick_time = linux_device.current_time;
+        is_open = true;
         debug::log::success("Opened camera '%s' at %dx%d", filepath, width, height);
+        linux_device.current_time = debug::timer::micros::now(), linux_device.last_tick_time = linux_device.current_time;
     }
 
     void Camera::update() {
@@ -167,14 +188,13 @@ namespace HENRY {
         if (elapsed > 33333) {
             DEBUG_BEGIN_FUNC_PROFILE;
 
-            auto &linux_device = linux_devices[id];
             if (ioctl(linux_device.device_file_id, VIDIOC_QBUF, &linux_devices[id].bufferinfo[linux_device.buffer_index]) < 0) {
                 debug::log::error("VIDIOC_QBUF2: %s", strerror(errno));
                 return;
             }
 
             ++linux_device.buffer_index;
-            if (linux_device.buffer_index == buffer_count) linux_device.buffer_index = 0;
+            if (linux_device.buffer_index == BUFFER_COUNT) linux_device.buffer_index = 0;
 
             // The buffer's waiting in the outgoing queue.
             if (ioctl(linux_device.device_file_id, VIDIOC_DQBUF, &linux_device.bufferinfo[linux_device.buffer_index]) < 0) {
@@ -183,6 +203,29 @@ namespace HENRY {
             }
 
             data = reinterpret_cast<unsigned char *>(linux_device.buffer_start[linux_device.buffer_index]);
+            data_size = linux_device.bufferinfo[linux_device.buffer_index].length;
+
+            if (!(data == nullptr) && data_size > 0) {
+                DEBUG_BEGIN_PROFILE(libjpeg_start);
+
+                jpeg_mem_src(&cinfo, data, data_size);
+                int rc = jpeg_read_header(&cinfo, TRUE);
+                jpeg_start_decompress(&cinfo);
+
+                while (cinfo.output_scanline < cinfo.output_height) {
+                    unsigned char *temp_array[] = {pixels + (cinfo.output_scanline) * width * 3};
+                    jpeg_read_scanlines(&cinfo, temp_array, 1);
+                }
+
+                DEBUG_END_PROFILE(libjpeg_start);
+                DEBUG_BEGIN_PROFILE(libjpeg_end);
+
+                jpeg_finish_decompress(&cinfo);
+
+                DEBUG_END_PROFILE(libjpeg_end);
+            }
+
+            on_update(*this);
 
             if (elapsed > 34000)
                 linux_device.last_tick_time = debug::timer::micros::now();
@@ -194,14 +237,17 @@ namespace HENRY {
     void Camera::close() {
         DEBUG_BEGIN_FUNC_PROFILE;
 
-        auto &linux_device = linux_devices[id];
-        // Deactivate streaming
-        int type = linux_device.bufferinfo[0].type;
-        if (ioctl(linux_device.device_file_id, VIDIOC_STREAMOFF, &type) < 0) {
-            debug::log::error("VIDIOC_STREAMOFF: %s", strerror(errno));
-            return;
+        if (is_open) {
+            jpeg_destroy_decompress(&cinfo);
+            auto &linux_device = linux_devices[id];
+            // Deactivate streaming
+            int type = linux_device.bufferinfo[0].type;
+            if (ioctl(linux_device.device_file_id, VIDIOC_STREAMOFF, &type) < 0) {
+                debug::log::error("VIDIOC_STREAMOFF: %s", strerror(errno));
+                return;
+            }
+            ::close(linux_device.device_file_id);
+            linux_device.device_file_id = -1;
         }
-        ::close(linux_device.device_file_id);
-        linux_device.device_file_id = -1;
     }
 } // namespace HENRY

@@ -8,6 +8,4 @@ int main() {
         return -1;
     }
     cam.update();
-
-    return 0;
 }

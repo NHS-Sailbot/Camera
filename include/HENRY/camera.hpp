@@ -6,14 +6,14 @@ namespace HENRY {
         struct Pixel {
             unsigned char r, g, b;
         };
-        Pixel *pixels;
-        unsigned int width, height, id;
-        unsigned char *data, is_open;
+        unsigned int width, height, id, data_size;
+        void (*on_update)(const Camera &);
+        unsigned char *data, *const pixels, is_open;
 
         Camera(const unsigned int width, const unsigned int height);
         ~Camera();
 
-        void open(const unsigned int width, const unsigned int height);
+        void open();
         void update();
         void close();
     };

@@ -14,7 +14,7 @@ endif()
 
 add_library(${lib_name} ${sources})
 
-target_link_libraries(${lib_name} PUBLIC debug1.0.0)
+target_link_libraries(${lib_name} PUBLIC debug1.0.0 jpeg)
 target_include_directories(${lib_name} PRIVATE ${lib_include_dir})
 
 target_compile_options(${lib_name} PRIVATE -Werror)
