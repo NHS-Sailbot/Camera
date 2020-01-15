@@ -31,10 +31,14 @@ namespace Henry {
     struct jpeg_error_mgr sJpegError;
     static void defaultCameraUpdate(const Camera &c) {}
 
+    Camera::Camera()
+        : mWidth(0), mHeight(0), mDataSize(0), mID(0), mFlags(NONE), mOnUpdate(defaultCameraUpdate), mData(nullptr),
+          mPixelData(nullptr) {}
+
     Camera::Camera(const unsigned int width, const unsigned int height)
         : mWidth(width), mHeight(height), mDataSize(0), mID(0), mFlags(NONE), mOnUpdate(defaultCameraUpdate), mData(nullptr),
-          mPixelData(new unsigned char[width * height * 3]) {
-        Open();
+          mPixelData(nullptr) {
+        Open(width, height);
     }
 
     Camera::~Camera() {
@@ -42,8 +46,12 @@ namespace Henry {
         delete[] mPixelData;
     }
 
-    void Camera::Open() {
+    void Camera::Open(const unsigned int width, const unsigned int height) {
         DEBUG_BEGIN_FUNC_PROFILE;
+
+        mWidth = width, mHeight = height;
+        if (mPixelData) delete[] mPixelData;
+        mPixelData = new unsigned char[mWidth * mHeight * 3];
 
         DEBUG_BEGIN_PROFILE(dSelectIndex);
         unsigned int tIndex = 0;
@@ -51,7 +59,7 @@ namespace Henry {
             if (sLinuxDevices[tIndex].mDeviceFileID < 0) break;
         if (tIndex > 31) {
             Debug::Log::error("Too many devices requested!");
-            mFlags &= !OPEN_STATUS;
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dSelectIndex);
@@ -64,7 +72,7 @@ namespace Henry {
         tLinuxDevice.mDeviceFileID = ::open(tFilepath, O_RDWR);
         if (!tLinuxDevice.mDeviceFileID) {
             Debug::Log::error("unable to open video source");
-            mFlags &= !OPEN_STATUS;
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dOpenDeviceFile);
@@ -73,14 +81,14 @@ namespace Henry {
         v4l2_capability tCapability;
         if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_QUERYCAP, &tCapability)) {
             Debug::Log::error("unable to query video capability");
-            ::close(tLinuxDevice.mDeviceFileID);
-            mFlags &= !Flags::OPEN_STATUS;
+            close(tLinuxDevice.mDeviceFileID);
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         if (!(tCapability.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
             Debug::Log::error("device does not handle single-planar video capture");
-            ::close(tLinuxDevice.mDeviceFileID);
-            mFlags &= !OPEN_STATUS;
+            close(tLinuxDevice.mDeviceFileID);
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dVideo4LinuxGetCapabilities);
@@ -93,8 +101,8 @@ namespace Henry {
         tFormat.fmt.pix.height = mHeight;
         if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_S_FMT, &tFormat) < 0) {
             Debug::Log::error("unable to set video capture format");
-            ::close(tLinuxDevice.mDeviceFileID);
-            mFlags &= !OPEN_STATUS;
+            close(tLinuxDevice.mDeviceFileID);
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dVideo4LinuxSetFormat);
@@ -107,7 +115,7 @@ namespace Henry {
         if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_S_PARM, &tStreamParam) == -1 ||
             ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_G_PARM, &tStreamParam) == -1) {
             Debug::Log::error("unable to set framerate");
-            mFlags &= !OPEN_STATUS;
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dVideo4LinuxSetFramerate);
@@ -119,8 +127,8 @@ namespace Henry {
         tBufRequest.count = 4;
         if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_REQBUFS, &tBufRequest) < 0) {
             Debug::Log::error("unable to request video buffers");
-            ::close(tLinuxDevice.mDeviceFileID);
-            mFlags &= !OPEN_STATUS;
+            close(tLinuxDevice.mDeviceFileID);
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         for (unsigned char i = 0; i < BUFFER_COUNT; ++i) {
@@ -129,15 +137,15 @@ namespace Henry {
             tLinuxDevice.mBufferInfo[i].index = i;
             if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_QUERYBUF, &tLinuxDevice.mBufferInfo[i]) < 0) {
                 Debug::Log::error("unable to query video buffers");
-                ::close(tLinuxDevice.mDeviceFileID);
-                mFlags &= !OPEN_STATUS;
+                close(tLinuxDevice.mDeviceFileID);
+                mFlags &= ~OPEN_STATUS;
                 return;
             }
             tLinuxDevice.mBufferStart[i] = mmap(NULL, tLinuxDevice.mBufferInfo[i].length, PROT_READ | PROT_WRITE, MAP_SHARED,
                                                 tLinuxDevice.mDeviceFileID, tLinuxDevice.mBufferInfo[i].m.offset);
             if (tLinuxDevice.mBufferStart[i] == MAP_FAILED) {
                 Debug::Log::error("mmap: %s", strerror(errno));
-                mFlags &= !OPEN_STATUS;
+                mFlags &= ~OPEN_STATUS;
                 return;
             }
             memset(tLinuxDevice.mBufferStart[i], 0, tLinuxDevice.mBufferInfo[i].length);
@@ -148,7 +156,7 @@ namespace Henry {
         int tType = tLinuxDevice.mBufferInfo[0].type;
         if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_STREAMON, &tType) < 0) {
             Debug::Log::error("VIDIOC_STREAMON: %s", strerror(errno));
-            mFlags &= !OPEN_STATUS;
+            mFlags &= ~OPEN_STATUS;
             return;
         }
         DEBUG_END_PROFILE(dVideo4LinuxActivateStreaming);
@@ -157,7 +165,7 @@ namespace Henry {
         for (unsigned char i = 1; i < BUFFER_COUNT; ++i) {
             if (ioctl(tLinuxDevice.mDeviceFileID, VIDIOC_QBUF, &tLinuxDevice.mBufferInfo[i]) < 0) {
                 Debug::Log::error("VIDIOC_QBUF: %s", strerror(errno));
-                mFlags &= !OPEN_STATUS;
+                mFlags &= ~OPEN_STATUS;
                 return;
             }
         }
@@ -240,7 +248,7 @@ namespace Henry {
                 Debug::Log::error("VIDIOC_STREAMOFF: %s", strerror(errno));
                 return;
             }
-            ::close(tLinuxDevice.mDeviceFileID);
+            close(tLinuxDevice.mDeviceFileID);
             tLinuxDevice.mDeviceFileID = -1;
         }
     }
