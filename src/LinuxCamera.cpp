@@ -3,8 +3,8 @@
 #include <asm/types.h>
 #include <linux/videodev2.h>
 
-#include <jpeglib.h>
 #include <stdio.h>
+#include <jpeglib.h>
 
 #include <sys/fcntl.h>
 #include <sys/ioctl.h>
@@ -18,7 +18,7 @@
 
 namespace Henry {
 	static constexpr unsigned int BUFFER_COUNT = 4, FRAMES_PER_SECOND = 30;
-	static constexpr unsigned long long FRAME_INTERVAL = 1000000000 / TICKS_PER_SECOND;
+	static constexpr unsigned long long FRAME_INTERVAL = 1000000000 / FRAMES_PER_SECOND;
 
 	struct LinuxCameraDevice {
 		v4l2_buffer mBufferInfo[BUFFER_COUNT];
